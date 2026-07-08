@@ -142,9 +142,9 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
 
     # Contact sensor over the entire robot.
     #
-    # Keep this unfiltered sensor for foot-air-time and foot-slide rewards.  It
-    # intentionally is not used for illegal-contact termination because its net
-    # forces include self-collision forces when self-collision is enabled.
+    # This sensor is still used for foot-air-time and foot-slide rewards.
+    # Illegal non-foot ground contact is checked geometrically below so robot
+    # self-collision forces cannot cause false terminations.
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*",
         history_length=3,
@@ -482,11 +482,17 @@ class RewardsCfg:
     # Keep this, but do not make it too huge at first or the robot may become
     # extremely conservative and refuse to step.
     illegal_non_foot_contact = RewTerm(
-        func=mdp.ground_contact_count,
+        func=mdp.body_height_below_minimum_count,
         weight=-2.0,
         params={
-            "sensor_names": NON_FOOT_GROUND_CONTACT_SENSOR_NAMES,
-            "threshold": 5.0,
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=NON_FOOT_CONTACT_BODY_NAMES,
+            ),
+            # Ground-contact guard for flat terrain. This is intentionally a
+            # geometric check rather than a contact-force check so self-collision
+            # forces cannot create false penalties.
+            "minimum_height": 0.08,
         },
     )
 
@@ -586,12 +592,15 @@ class TerminationsCfg:
     # Competition rule:
     # terminate immediately when anything except the two feet touches the ground.
     illegal_non_foot_contact = DoneTerm(
-        func=mdp.illegal_ground_contact,
+        func=mdp.body_height_below_minimum,
         params={
-            "sensor_names": NON_FOOT_GROUND_CONTACT_SENSOR_NAMES,
-            # Only ground-filtered contacts can trigger this threshold, so robot
-            # self-collision forces no longer cause immediate termination.
-            "threshold": 1.0,
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=NON_FOOT_CONTACT_BODY_NAMES,
+            ),
+            # Terminate when any disallowed body is at ground-contact height on
+            # the flat plane. Feet are excluded via NON_FOOT_CONTACT_BODY_NAMES.
+            "minimum_height": 0.08,
         },
     )
 

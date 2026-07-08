@@ -68,42 +68,33 @@ def standing_still_penalty(
 
     return active * speed_deficit
 
-def _ground_contact_force_norms(env: ManagerBasedRLEnv, sensor_names: list[str]) -> torch.Tensor:
-    """Return max filtered ground-contact force per sensor and environment."""
-    force_norms = []
-    for sensor_name in sensor_names:
-        sensor = env.scene[sensor_name]
-        forces = getattr(sensor.data, "force_matrix_w_history", None)
-        if forces is None:
-            forces = sensor.data.force_matrix_w
-        # Shapes are typically (num_envs, history, bodies, filters, 3) or
-        # (num_envs, bodies, filters, 3).  Reducing every non-env/non-vector
-        # dimension produces one ground-contact force magnitude per env.
-        force_norm = torch.linalg.norm(forces, dim=-1)
-        reduce_dims = tuple(range(1, force_norm.ndim))
-        force_norms.append(torch.amax(force_norm, dim=reduce_dims))
-    return torch.stack(force_norms, dim=1)
+
+def _selected_body_heights(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return world-frame z positions for the selected bodies."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
 
 
-def ground_contact_count(
+def body_height_below_minimum_count(
     env: ManagerBasedRLEnv,
-    sensor_names: list[str],
-    threshold: float,
+    minimum_height: float,
+    asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Penalize only non-foot body contacts with the ground plane.
+    """Penalize disallowed bodies that have reached flat-ground contact height.
 
-    The configured sensors are filtered to ``/World/ground``, so self-collision
-    contacts between robot links do not contribute to this reward term.
+    This is a geometry-based ground-contact proxy for flat terrain. It ignores
+    robot self-collision forces entirely, while still detecting a fall when any
+    non-foot body reaches the ground plane.
     """
-    force_norms = _ground_contact_force_norms(env, sensor_names)
-    return torch.sum(force_norms > threshold, dim=1).float()
+    body_heights = _selected_body_heights(env, asset_cfg)
+    return torch.sum(body_heights < minimum_height, dim=1).float()
 
 
-def illegal_ground_contact(
+def body_height_below_minimum(
     env: ManagerBasedRLEnv,
-    sensor_names: list[str],
-    threshold: float,
+    minimum_height: float,
+    asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Terminate only when a non-foot body touches the ground plane."""
-    force_norms = _ground_contact_force_norms(env, sensor_names)
-    return torch.any(force_norms > threshold, dim=1)
+    """Terminate when any selected body reaches flat-ground contact height."""
+    body_heights = _selected_body_heights(env, asset_cfg)
+    return torch.any(body_heights < minimum_height, dim=1)
