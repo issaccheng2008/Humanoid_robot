@@ -71,20 +71,6 @@ NON_FOOT_CONTACT_BODY_NAMES = [
     "l_ankle_pitch_link",
 ]
 
-NON_FOOT_GROUND_CONTACT_SENSOR_NAMES = [
-    "base_ground_contact",
-    "r_leg_pitch_ground_contact",
-    "r_leg_roll_ground_contact",
-    "r_leg_yaw_ground_contact",
-    "r_knee_pitch_ground_contact",
-    "r_ankle_pitch_ground_contact",
-    "l_leg_pitch_ground_contact",
-    "l_leg_roll_ground_contact",
-    "l_leg_yaw_ground_contact",
-    "l_knee_pitch_ground_contact",
-    "l_ankle_pitch_ground_contact",
-]
-
 LEG_JOINT_NAMES = [
     "r_leg_pitch_joint",
     "r_leg_roll_joint",
@@ -142,75 +128,12 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
 
     # Contact sensor over the entire robot.
     #
-    # Keep this unfiltered sensor for foot-air-time and foot-slide rewards.  It
-    # intentionally is not used for illegal-contact termination because its net
-    # forces include self-collision forces when self-collision is enabled.
+    # This must cover all bodies because we need to detect illegal contact from
+    # any non-foot link.
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*",
         history_length=3,
         track_air_time=True,
-    )
-
-    # Ground-filtered sensors for illegal non-foot contacts.
-    #
-    # Isaac Lab contact filtering is reliable as one sensor body against one or
-    # more filtered bodies, so each non-foot body gets its own sensor.  These
-    # sensors only report contacts against the ground plane and ignore robot
-    # self-collision contacts between adjacent links.
-    base_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    r_leg_pitch_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/r_leg_pitch_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    r_leg_roll_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/r_leg_roll_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    r_leg_yaw_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/r_leg_yaw_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    r_knee_pitch_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/r_knee_pitch_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    r_ankle_pitch_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/r_ankle_pitch_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    l_leg_pitch_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/l_leg_pitch_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    l_leg_roll_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/l_leg_roll_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    l_leg_yaw_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/l_leg_yaw_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    l_knee_pitch_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/l_knee_pitch_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
-    )
-    l_ankle_pitch_ground_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/l_ankle_pitch_link",
-        history_length=3,
-        filter_prim_paths_expr=["/World/ground"],
     )
 
     # Light.
@@ -482,10 +405,13 @@ class RewardsCfg:
     # Keep this, but do not make it too huge at first or the robot may become
     # extremely conservative and refuse to step.
     illegal_non_foot_contact = RewTerm(
-        func=mdp.ground_contact_count,
+        func=mdp.undesired_contacts,
         weight=-2.0,
         params={
-            "sensor_names": NON_FOOT_GROUND_CONTACT_SENSOR_NAMES,
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=NON_FOOT_CONTACT_BODY_NAMES,
+            ),
             "threshold": 5.0,
         },
     )
@@ -586,11 +512,13 @@ class TerminationsCfg:
     # Competition rule:
     # terminate immediately when anything except the two feet touches the ground.
     illegal_non_foot_contact = DoneTerm(
-        func=mdp.illegal_ground_contact,
+        func=mdp.illegal_contact,
         params={
-            "sensor_names": NON_FOOT_GROUND_CONTACT_SENSOR_NAMES,
-            # Only ground-filtered contacts can trigger this threshold, so robot
-            # self-collision forces no longer cause immediate termination.
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=NON_FOOT_CONTACT_BODY_NAMES,
+            ),
+            # Start with 1.0. If false terminations occur, try 5.0 while debugging.
             "threshold": 1.0,
         },
     )
@@ -649,8 +577,6 @@ class HumanoidRobotPolicyEnvCfg(ManagerBasedRLEnvCfg):
 
         # Sensor update periods.
         self.scene.contact_forces.update_period = self.sim.dt
-        for sensor_name in NON_FOOT_GROUND_CONTACT_SENSOR_NAMES:
-            getattr(self.scene, sensor_name).update_period = self.sim.dt
 
         # Viewer.
         self.viewer.eye = (4.0, 4.0, 3.0)
