@@ -18,7 +18,7 @@ from isaaclab.assets.articulation import ArticulationCfg
 
 # TODO: Replace this with the USD generated from your URDF, not the URDF itself.
 # Example: "/home/tt/Humanoid_Robot_Policy/assets/humanoid.usd"
-HUMANOID_USD_PATH = "/home/tt/Desktop/Humanoid_Robot/Humanoid_Robot.usd"
+HUMANOID_USD_PATH = f"/home/tt/Desktop/Humanoid_Robot/Humanoid_Robot/Humanoid_Robot.usd"
 
 
 HUMANOID_ROBOT_CFG = ArticulationCfg(
@@ -40,7 +40,7 @@ HUMANOID_ROBOT_CFG = ArticulationCfg(
             # Start with self-collisions disabled. Enable later only after your
             # collision meshes are clean, because self-collisions can destabilize
             # early bring-up and slow down training.
-            enabled_self_collisions=False,
+            enabled_self_collisions=True,
             solver_position_iteration_count=8,
             solver_velocity_iteration_count=4,
         ),

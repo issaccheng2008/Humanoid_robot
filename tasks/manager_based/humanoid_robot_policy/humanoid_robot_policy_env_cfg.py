@@ -36,7 +36,7 @@ from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
-import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
+from . import mdp
 
 from .humanoid_robot import HUMANOID_ROBOT_CFG
 
@@ -152,22 +152,24 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
 
 @configclass
 class CommandsCfg:
-    """Command specifications for the MDP.
-
-    The command tells the policy what walking velocity to track.
-    """
+    """Command specifications for the MDP."""
 
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.02,
-        rel_heading_envs=1.0,
-        heading_command=True,
+
+        # Do not give standing commands during the first walking experiment.
+        rel_standing_envs=0.0,
+
+        # Disable heading/turning at first.
+        rel_heading_envs=0.0,
+        heading_command=False,
         heading_control_stiffness=0.5,
+
         debug_vis=True,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            # Start easy: slow forward walking.
-            lin_vel_x=(0.0, 0.5),
+            # Force real forward walking commands.
+            lin_vel_x=(0.25, 2.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(-math.pi, math.pi),
@@ -294,102 +296,89 @@ class EventCfg:
     )
 
 
-##
-# MDP: Rewards
-##
-
 @configclass
 class RewardsCfg:
-    """Reward terms for the MDP."""
+    """Reward terms for the bipedal humanoid walking MDP.
+
+    This is G1-like, but modified to fight two early local optima:
+    1. standing still
+    2. shuffling/sliding feet without real stepping
+    """
 
     # -------------------------------------------------------------------------
-    # Task rewards
+    # Main task rewards
     # -------------------------------------------------------------------------
 
+    # Stronger and sharper than your current version.
+    # Your old std=0.5 was too forgiving, so standing still could still get reward.
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
-        weight=1.0,
+        weight=2.5,
         params={
             "command_name": "base_velocity",
-            "std": 0.5,
+            "std": 0.35,
         },
     )
 
+    # Keep yaw tracking weaker during the first phase.
+    # First teach straight walking, then increase turning later.
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_world_exp,
-        weight=1.0,
+        weight=0.5,
         params={
             "command_name": "base_velocity",
             "std": 0.5,
         },
     )
 
-    # Encourage biped stepping.
-    # This uses only the two legal foot contact links.
+    # Extra forward-motion reward to break the "just stand there" solution.
+    forward_velocity_bonus = RewTerm(
+        func=mdp.forward_velocity_bonus,
+        weight=1.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot"),
+            "min_command": 0.10,
+        },
+    )
+
+    # Direct penalty for not moving when commanded to move.
+    standing_still_penalty = RewTerm(
+        func=mdp.standing_still_penalty,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot"),
+            "min_command": 0.10,
+            "min_speed": 0.12,
+        },
+    )
+
+    # -------------------------------------------------------------------------
+    # Anti-shuffling / stepping terms
+    # -------------------------------------------------------------------------
+
+    # Increase this compared with your current 0.20.
+    # This encourages real foot lifting instead of tiny sliding motions.
     feet_air_time = RewTerm(
         func=mdp.feet_air_time_positive_biped,
-        weight=0.20,
+        weight=0.75,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
                 body_names=FOOT_BODY_NAMES,
             ),
-            "threshold": 0.4,
+            # 0.4 is G1-like. For your smaller/custom robot, start slightly lower.
+            "threshold": 0.25,
         },
     )
 
-    # -------------------------------------------------------------------------
-    # Competition contact rule
-    # -------------------------------------------------------------------------
-
-    # Strong penalty when the episode terminates early.
-    # Since illegal non-foot contact is a termination condition, this heavily
-    # punishes touching the ground with anything except the two feet.
-    termination_penalty = RewTerm(
-        func=mdp.is_terminated,
-        weight=-200.0,
-    )
-
-    # Direct penalty for non-foot body contact.
-    # This gives the policy a learning signal before/alongside termination.
-    illegal_non_foot_contact = RewTerm(
-        func=mdp.undesired_contacts,
-        weight=-5.0,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=NON_FOOT_CONTACT_BODY_NAMES,
-            ),
-            # Start with 1.0. If false terminations occur, try 5.0 while debugging.
-            "threshold": 1.0,
-        },
-    )
-
-    # -------------------------------------------------------------------------
-    # Stability rewards / penalties
-    # -------------------------------------------------------------------------
-
-    flat_orientation_l2 = RewTerm(
-        func=mdp.flat_orientation_l2,
-        weight=-1.0,
-    )
-
-    lin_vel_z_l2 = RewTerm(
-        func=mdp.lin_vel_z_l2,
-        weight=0.0,
-    )
-
-    ang_vel_xy_l2 = RewTerm(
-        func=mdp.ang_vel_xy_l2,
-        weight=-0.05,
-    )
-
-    # Penalize legal feet sliding.
-    # This applies only to the two allowed contact links.
+    # Stronger foot-slide penalty.
+    # This is the main anti-shuffling term.
     feet_slide = RewTerm(
         func=mdp.feet_slide,
-        weight=-0.10,
+        weight=-0.35,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
@@ -403,12 +392,60 @@ class RewardsCfg:
     )
 
     # -------------------------------------------------------------------------
+    # Contact / termination terms
+    # -------------------------------------------------------------------------
+
+    # Strong penalty for early termination, G1-style.
+    termination_penalty = RewTerm(
+        func=mdp.is_terminated,
+        weight=-200.0,
+    )
+
+    # Penalty before or during illegal-contact termination.
+    # Keep this, but do not make it too huge at first or the robot may become
+    # extremely conservative and refuse to step.
+    illegal_non_foot_contact = RewTerm(
+        func=mdp.undesired_contacts,
+        weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=NON_FOOT_CONTACT_BODY_NAMES,
+            ),
+            "threshold": 5.0,
+        },
+    )
+
+    # -------------------------------------------------------------------------
+    # Stability terms
+    # -------------------------------------------------------------------------
+
+    flat_orientation_l2 = RewTerm(
+        func=mdp.flat_orientation_l2,
+        weight=-1.0,
+    )
+
+    # Add this for flat-ground walking. Your previous value was 0.0.
+    # This discourages hopping/flying while still allowing foot lift.
+    lin_vel_z_l2 = RewTerm(
+        func=mdp.lin_vel_z_l2,
+        weight=-0.2,
+    )
+
+    ang_vel_xy_l2 = RewTerm(
+        func=mdp.ang_vel_xy_l2,
+        weight=-0.05,
+    )
+
+    # -------------------------------------------------------------------------
     # Joint / action penalties
     # -------------------------------------------------------------------------
 
+    # Make these weaker at first.
+    # If they are too strong, the easiest solution is "do not move".
     dof_torques_l2 = RewTerm(
         func=mdp.joint_torques_l2,
-        weight=-1.5e-7,
+        weight=-5.0e-8,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -419,7 +456,7 @@ class RewardsCfg:
 
     dof_acc_l2 = RewTerm(
         func=mdp.joint_acc_l2,
-        weight=-1.25e-7,
+        weight=-5.0e-8,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -428,9 +465,10 @@ class RewardsCfg:
         },
     )
 
+    # Slightly weaker than G1 at first. Increase later when walking works.
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2,
-        weight=-0.005,
+        weight=-0.002,
     )
 
     dof_pos_limits = RewTerm(
@@ -444,10 +482,11 @@ class RewardsCfg:
         },
     )
 
-    # Softly discourage excessive leg yaw/roll motion at the beginning.
+    # Do not penalize leg pitch/knee pitch too much, because those are needed
+    # for stepping. Only softly discourage sideways/yaw flailing.
     joint_deviation_yaw_roll = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.05,
+        weight=-0.03,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -510,7 +549,7 @@ class HumanoidRobotPolicyEnvCfg(ManagerBasedRLEnvCfg):
 
     # Scene settings.
     scene: HumanoidRobotPolicySceneCfg = HumanoidRobotPolicySceneCfg(
-        num_envs=1024,
+        num_envs=2048,
         env_spacing=2.5,
     )
 
@@ -530,7 +569,7 @@ class HumanoidRobotPolicyEnvCfg(ManagerBasedRLEnvCfg):
 
         # General settings.
         self.decimation = 4
-        self.episode_length_s = 20.0
+        self.episode_length_s = 15.0
 
         # Simulation settings.
         self.sim.dt = 0.005
@@ -557,17 +596,16 @@ class HumanoidRobotPolicyEnvCfg_PLAY(HumanoidRobotPolicyEnvCfg):
         super().__post_init__()
 
         # Smaller scene for play.
-        self.scene.num_envs = 50
+        self.scene.num_envs = 5
         self.scene.env_spacing = 2.5
 
         # Longer episode for watching the policy.
-        self.episode_length_s = 40.0
+        self.episode_length_s = 50.0
 
         # Fixed walking command for playback.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.3, 0.3)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 1)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
-        self.commands.base_velocity.ranges.heading = (0.0, 0.0)
-
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
         # Disable observation noise during playback.
         self.observations.policy.enable_corruption = False
