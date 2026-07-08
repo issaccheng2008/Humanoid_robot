@@ -128,8 +128,9 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
 
     # Contact sensor over the entire robot.
     #
-    # This must cover all bodies because we need to detect illegal contact from
-    # any non-foot link.
+    # This sensor is still used for foot-air-time and foot-slide rewards.
+    # Illegal non-foot ground contact is checked geometrically below so robot
+    # self-collision forces cannot cause false terminations.
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*",
         history_length=3,
@@ -405,14 +406,17 @@ class RewardsCfg:
     # Keep this, but do not make it too huge at first or the robot may become
     # extremely conservative and refuse to step.
     illegal_non_foot_contact = RewTerm(
-        func=mdp.undesired_contacts,
+        func=mdp.body_height_below_minimum_count,
         weight=-2.0,
         params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
+            "asset_cfg": SceneEntityCfg(
+                "robot",
                 body_names=NON_FOOT_CONTACT_BODY_NAMES,
             ),
-            "threshold": 5.0,
+            # Ground-contact guard for flat terrain. This is intentionally a
+            # geometric check rather than a contact-force check so self-collision
+            # forces cannot create false penalties.
+            "minimum_height": 0.08,
         },
     )
 
@@ -512,14 +516,15 @@ class TerminationsCfg:
     # Competition rule:
     # terminate immediately when anything except the two feet touches the ground.
     illegal_non_foot_contact = DoneTerm(
-        func=mdp.illegal_contact,
+        func=mdp.body_height_below_minimum,
         params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
+            "asset_cfg": SceneEntityCfg(
+                "robot",
                 body_names=NON_FOOT_CONTACT_BODY_NAMES,
             ),
-            # Start with 1.0. If false terminations occur, try 5.0 while debugging.
-            "threshold": 1.0,
+            # Terminate when any disallowed body is at ground-contact height on
+            # the flat plane. Feet are excluded via NON_FOOT_CONTACT_BODY_NAMES.
+            "minimum_height": 0.08,
         },
     )
 

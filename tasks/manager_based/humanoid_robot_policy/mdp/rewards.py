@@ -67,3 +67,34 @@ def standing_still_penalty(
     speed_deficit = torch.clamp(min_speed - actual_vx, min=0.0)
 
     return active * speed_deficit
+
+
+def _selected_body_heights(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return world-frame z positions for the selected bodies."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+
+
+def body_height_below_minimum_count(
+    env: ManagerBasedRLEnv,
+    minimum_height: float,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize disallowed bodies that have reached flat-ground contact height.
+
+    This is a geometry-based ground-contact proxy for flat terrain. It ignores
+    robot self-collision forces entirely, while still detecting a fall when any
+    non-foot body reaches the ground plane.
+    """
+    body_heights = _selected_body_heights(env, asset_cfg)
+    return torch.sum(body_heights < minimum_height, dim=1).float()
+
+
+def body_height_below_minimum(
+    env: ManagerBasedRLEnv,
+    minimum_height: float,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Terminate when any selected body reaches flat-ground contact height."""
+    body_heights = _selected_body_heights(env, asset_cfg)
+    return torch.any(body_heights < minimum_height, dim=1)
