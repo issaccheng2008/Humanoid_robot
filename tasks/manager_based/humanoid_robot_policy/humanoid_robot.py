@@ -24,8 +24,8 @@ HUMANOID_USD_PATH = f"/home/tt/Desktop/Humanoid_Robot/Humanoid_Robot/Humanoid_Ro
 HUMANOID_ROBOT_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=HUMANOID_USD_PATH,
-        # For walking tasks, keep contact sensors enabled so the environment can
-        # compute foot-contact rewards and base-contact terminations.
+        # Keep contact sensors enabled for foot stepping rewards. Fall detection
+        # is handled from root orientation and root height in the environment.
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -37,9 +37,9 @@ HUMANOID_ROBOT_CFG = ArticulationCfg(
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            # Start with self-collisions disabled. Enable later only after your
-            # collision meshes are clean, because self-collisions can destabilize
-            # early bring-up and slow down training.
+            # Self-collision is enabled because the USD collision filters and
+            # solve-contact settings have been manually cleaned up for the
+            # nearby leg links that can contact during locomotion.
             enabled_self_collisions=True,
             solver_position_iteration_count=8,
             solver_velocity_iteration_count=4,

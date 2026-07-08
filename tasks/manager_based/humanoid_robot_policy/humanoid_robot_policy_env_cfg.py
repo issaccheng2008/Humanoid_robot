@@ -11,9 +11,9 @@ Suggested file name:
 This file is designed for the project:
     Humanoid_Robot_Policy
 
-Competition rule:
-    Only l_ankle_roll_link and r_ankle_roll_link are allowed to touch the ground.
-    If any other robot body touches the ground, the episode terminates.
+Self-collision note:
+    Fall detection is based on root orientation and root height. Contact sensors
+    are used only for foot stepping rewards, not whole-body fall detection.
 """
 
 from __future__ import annotations
@@ -47,29 +47,14 @@ from .humanoid_robot import HUMANOID_ROBOT_CFG
 
 BASE_BODY_NAME = "base_link"
 
-# These are the only two links allowed to touch the ground.
 FOOT_BODY_NAMES = [
     "l_ankle_roll_link",
     "r_ankle_roll_link",
 ]
 
-# Competition rule:
-# if any of these bodies touches the ground, the robot is out.
-NON_FOOT_CONTACT_BODY_NAMES = [
-    "base_link",
-
-    "r_leg_pitch_link",
-    "r_leg_roll_link",
-    "r_leg_yaw_link",
-    "r_knee_pitch_link",
-    "r_ankle_pitch_link",
-
-    "l_leg_pitch_link",
-    "l_leg_roll_link",
-    "l_leg_yaw_link",
-    "l_knee_pitch_link",
-    "l_ankle_pitch_link",
-]
+TARGET_BASE_HEIGHT = 0.32
+MIN_BASE_HEIGHT = 0.20
+MAX_BASE_TILT = math.radians(65.0)
 
 LEG_JOINT_NAMES = [
     "r_leg_pitch_joint",
@@ -126,14 +111,14 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot"
     )
 
-    # Contact sensor over the entire robot.
-    #
-    # This must cover all bodies because we need to detect illegal contact from
-    # any non-foot link.
+    # Contact sensor used for foot stepping rewards only.
+    # Do not use this for fall detection when self-collision is enabled,
+    # because self-collision also produces contact forces.
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*",
         history_length=3,
         track_air_time=True,
+        force_threshold=1.0,
     )
 
     # Light.
@@ -358,8 +343,10 @@ class RewardsCfg:
     # Anti-shuffling / stepping terms
     # -------------------------------------------------------------------------
 
-    # Increase this compared with your current 0.20.
-    # This encourages real foot lifting instead of tiny sliding motions.
+    # G1-like foot timing reward using only l_ankle_roll_link and r_ankle_roll_link.
+    # This assumes the USD collision filters prevent foot self-collision from
+    # corrupting foot contact timing. If that still happens later, replace this
+    # with a custom ground-filtered reward.
     feet_air_time = RewTerm(
         func=mdp.feet_air_time_positive_biped,
         weight=0.75,
@@ -374,8 +361,10 @@ class RewardsCfg:
         },
     )
 
-    # Stronger foot-slide penalty.
-    # This is the main anti-shuffling term.
+    # G1-like foot slide penalty using only l_ankle_roll_link and r_ankle_roll_link.
+    # This assumes the USD collision filters prevent foot self-collision from
+    # corrupting foot contact timing. If that still happens later, replace this
+    # with a custom ground-filtered reward.
     feet_slide = RewTerm(
         func=mdp.feet_slide,
         weight=-0.35,
@@ -401,20 +390,8 @@ class RewardsCfg:
         weight=-200.0,
     )
 
-    # Penalty before or during illegal-contact termination.
-    # Keep this, but do not make it too huge at first or the robot may become
-    # extremely conservative and refuse to step.
-    illegal_non_foot_contact = RewTerm(
-        func=mdp.undesired_contacts,
-        weight=-2.0,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=NON_FOOT_CONTACT_BODY_NAMES,
-            ),
-            "threshold": 5.0,
-        },
-    )
+    # Disabled: fall is detected by root orientation and root height, not contact forces.
+    illegal_non_foot_contact = None
 
     # -------------------------------------------------------------------------
     # Stability terms
@@ -423,6 +400,15 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
         weight=-1.0,
+    )
+
+    base_height_l2 = RewTerm(
+        func=mdp.base_height_l2,
+        weight=-2.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "target_height": TARGET_BASE_HEIGHT,
+        },
     )
 
     # Add this for flat-ground walking. Your previous value was 0.0.
@@ -509,17 +495,19 @@ class TerminationsCfg:
         time_out=True,
     )
 
-    # Competition rule:
-    # terminate immediately when anything except the two feet touches the ground.
-    illegal_non_foot_contact = DoneTerm(
-        func=mdp.illegal_contact,
+    bad_orientation = DoneTerm(
+        func=mdp.bad_orientation,
         params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=NON_FOOT_CONTACT_BODY_NAMES,
-            ),
-            # Start with 1.0. If false terminations occur, try 5.0 while debugging.
-            "threshold": 1.0,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "limit_angle": MAX_BASE_TILT,
+        },
+    )
+
+    low_base_height = DoneTerm(
+        func=mdp.root_height_below_minimum,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "minimum_height": MIN_BASE_HEIGHT,
         },
     )
 

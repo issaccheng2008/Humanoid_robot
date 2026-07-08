@@ -67,3 +67,17 @@ def standing_still_penalty(
     speed_deficit = torch.clamp(min_speed - actual_vx, min=0.0)
 
     return active * speed_deficit
+
+
+def base_height_l2(
+    env: ManagerBasedRLEnv,
+    target_height: float,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize root/base height error.
+
+    This is a fall-prevention shaping reward. It does not depend on contact sensors,
+    so it works correctly when self-collision is enabled.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.square(asset.data.root_pos_w[:, 2] - target_height)
