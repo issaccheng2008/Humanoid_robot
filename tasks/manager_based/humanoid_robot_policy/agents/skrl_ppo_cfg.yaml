@@ -109,6 +109,6 @@ trainer:
 
   # Same starting value as the G1 flat config.
   # Increase later if the robot starts learning but is not yet stable.
-  timesteps: 100000
+  timesteps: 72000
 
   environment_info: log

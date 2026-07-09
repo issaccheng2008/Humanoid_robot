@@ -309,7 +309,7 @@ class RewardsCfg:
     # First teach straight walking, then increase turning later.
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_world_exp,
-        weight=0.5,
+        weight=1.5,
         params={
             "command_name": "base_velocity",
             "std": 0.5,
@@ -591,9 +591,11 @@ class HumanoidRobotPolicyEnvCfg_PLAY(HumanoidRobotPolicyEnvCfg):
         self.episode_length_s = 50.0
 
         # Fixed walking command for playback.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 1)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 2)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-0.5, 0.5)
-        self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
+        self.commands.base_velocity.ranges.ang_vel_z = (0, 0)
+        self.commands.base_velocity.ranges.heading = (3.1, 3.1)
+        # self.commands.base_velocity.ranges.ang_vel_z = (-0.5, 0.5)
+        # self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
         # Disable observation noise during playback.
         self.observations.policy.enable_corruption = False
