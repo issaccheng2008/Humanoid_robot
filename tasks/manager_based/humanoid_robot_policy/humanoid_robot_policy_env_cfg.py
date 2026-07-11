@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Manager-based locomotion environment config for the custom humanoid robot.
+"""Manager-based rough-terrain locomotion environment config for the custom humanoid robot.
 
 Suggested file name:
     humanoid_robot_policy_env_cfg.py
@@ -41,7 +41,7 @@ from . import mdp
 
 from .humanoid_robot import HUMANOID_ROBOT_CFG
 
-SMALL_ROUGH_TERRAIN_CFG = TerrainGeneratorCfg(
+SMALL_RANDOM_ROUGH_TERRAIN_CFG = TerrainGeneratorCfg(
     # Size of each generated terrain patch.
     size=(8.0, 8.0),
 
@@ -123,15 +123,15 @@ YAW_ROLL_JOINT_NAMES = [
 
 @configclass
 class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
-    """Scene configuration for the custom humanoid walking task."""
+    """Scene configuration for rough-terrain walking with forward and turning commands."""
 
-    # Ground plane.
+    # Randomly rough ground used to improve locomotion robustness.
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
 
-        # Use the generated terrain instead of an infinite plane.
+        # Generate small, smooth height variations instead of using an infinite plane.
         terrain_type="generator",
-        terrain_generator=SMALL_ROUGH_TERRAIN_CFG,
+        terrain_generator=SMALL_RANDOM_ROUGH_TERRAIN_CFG,
 
         collision_group=-1,
 
@@ -187,14 +187,16 @@ class CommandsCfg:
         # Do not give standing commands during the first walking experiment.
         rel_standing_envs=0.01,
 
-        # Disable heading/turning at first.
+        # Use direct yaw-rate commands for turning. ``heading_command=False`` means
+        # angular velocity is sampled from ``ang_vel_z`` instead of deriving it
+        # from an absolute heading target. Therefore, ``rel_heading_envs`` is zero.
         rel_heading_envs=0.0,
         heading_command=False,
         heading_control_stiffness=0.5,
 
         debug_vis=True,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            # Force real forward walking commands.
+            # Sample forward walking and turning commands; lateral velocity remains disabled.
             lin_vel_x=(0.0, 1.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
@@ -372,8 +374,8 @@ class RewardsCfg:
         },
     )
 
-    # Keep yaw tracking weaker during the first phase.
-    # First teach straight walking, then increase turning later.
+    # Track the sampled yaw-rate commands so the policy learns turning together
+    # with forward locomotion.
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_world_exp,
         weight=2.5,
@@ -446,8 +448,8 @@ class RewardsCfg:
         weight=-1.0,
     )
 
-    # Add this for flat-ground walking. Your previous value was 0.0.
-    # This discourages hopping/flying while still allowing foot lift.
+    # Penalize unnecessary vertical base motion on the mildly rough terrain.
+    # The terrain variation is small enough that proper foot lift is still possible.
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
         weight=-0.5,
@@ -567,8 +569,8 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP.
 
-    Empty for now because this first version trains on a flat plane.
-    Add terrain curriculum later after the robot can stand/walk.
+    Training already uses randomly rough terrain with fixed difficulty. The
+    terrain generator curriculum is disabled, so no curriculum term is needed.
     """
 
     pass
@@ -580,7 +582,7 @@ class CurriculumCfg:
 
 @configclass
 class HumanoidRobotPolicyEnvCfg(ManagerBasedRLEnvCfg):
-    """Configuration for the custom humanoid velocity-tracking environment."""
+    """Configuration for rough-terrain forward-velocity and yaw-rate tracking."""
 
     # Scene settings.
     scene: HumanoidRobotPolicySceneCfg = HumanoidRobotPolicySceneCfg(
