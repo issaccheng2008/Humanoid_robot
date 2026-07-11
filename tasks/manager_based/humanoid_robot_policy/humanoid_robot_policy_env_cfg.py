@@ -383,29 +383,6 @@ class RewardsCfg:
         },
     )
 
-    # Extra forward-motion reward to break the "just stand there" solution.
-    forward_velocity_bonus = RewTerm(
-        func=mdp.forward_velocity_bonus,
-        weight=1.0,
-        params={
-            "command_name": "base_velocity",
-            "asset_cfg": SceneEntityCfg("robot"),
-            "min_command": 0.10,
-        },
-    )
-
-    # Direct penalty for not moving when commanded to move.
-    standing_still_penalty = RewTerm(
-        func=mdp.standing_still_penalty,
-        weight=-2.0,
-        params={
-            "command_name": "base_velocity",
-            "asset_cfg": SceneEntityCfg("robot"),
-            "min_command": 0.10,
-            "min_speed": 0.12,
-        },
-    )
-
     # -------------------------------------------------------------------------
     # Anti-shuffling / stepping terms
     # -------------------------------------------------------------------------
@@ -473,7 +450,7 @@ class RewardsCfg:
     # This discourages hopping/flying while still allowing foot lift.
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
-        weight=-0.2,
+        weight=-0.5,
     )
 
     ang_vel_xy_l2 = RewTerm(
@@ -536,6 +513,18 @@ class RewardsCfg:
                 "robot",
                 joint_names=YAW_ROLL_JOINT_NAMES,
             )
+        },
+    )
+
+    #both feet airborn penalty
+    both_feet_airborne = RewTerm(
+        func=mdp.both_feet_airborne,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=FOOT_BODY_NAMES,
+            ),
         },
     )
 

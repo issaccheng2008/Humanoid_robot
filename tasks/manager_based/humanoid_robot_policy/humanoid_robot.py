@@ -51,18 +51,19 @@ HUMANOID_ROBOT_CFG = ArticulationCfg(
         pos=(0.0, 0.0, 0.32),
         joint_pos={
             # Right leg
-            "r_leg_pitch_joint": 0.0,
+            "r_leg_pitch_joint": 0.15,
             "r_leg_roll_joint": 0.0,
             "r_leg_yaw_joint": 0.0,
-            "r_knee_pitch_joint": 0.0,
-            "r_ankle_pitch_joint": 0.0,
+            "r_knee_pitch_joint": 0.30,
+            "r_ankle_pitch_joint": -0.15,
             "r_ankle_roll_joint": 0.0,
-            # Left leg
-            "l_leg_pitch_joint": 0.0,
+
+            # Left leg: mirrored joint signs because the pitch axes are reversed.
+            "l_leg_pitch_joint": -0.15,
             "l_leg_roll_joint": 0.0,
             "l_leg_yaw_joint": 0.0,
-            "l_knee_pitch_joint": 0.0,
-            "l_ankle_pitch_joint": 0.0,
+            "l_knee_pitch_joint": -0.30,
+            "l_ankle_pitch_joint": 0.15,
             "l_ankle_roll_joint": 0.0,
         },
         joint_vel={".*": 0.0},

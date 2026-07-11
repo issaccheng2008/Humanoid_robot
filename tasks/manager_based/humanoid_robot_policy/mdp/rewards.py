@@ -19,65 +19,19 @@ def joint_pos_target_l2(env: ManagerBasedRLEnv, target: float, asset_cfg: SceneE
     return torch.sum(torch.square(joint_pos - target), dim=1)
 
 
-def forward_velocity_bonus(
+from isaaclab.sensors import ContactSensor
+
+
+def both_feet_airborne(
     env: ManagerBasedRLEnv,
-    command_name: str,
-    asset_cfg: SceneEntityCfg,
-    min_command: float = 0.10,
+    sensor_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Reward actually moving forward when a forward command is given.
+    """Return 1 when neither foot is in contact."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
 
-    This is intentionally simple. It helps break the standing-still local optimum.
-    The reward saturates at 1.0, so the robot is not rewarded for running much faster
-    than the command.
-    """
-    asset: Articulation = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
+    contact_time = contact_sensor.data.current_contact_time[
+        :, sensor_cfg.body_ids
+    ]
+    in_contact = contact_time > 0.0
 
-    commanded_vx = torch.clamp(command[:, 0], min=0.0)
-    actual_vx = asset.data.root_lin_vel_b[:, 0]
-
-    active = (commanded_vx > min_command).float()
-    normalized_vx = actual_vx / (commanded_vx + 1.0e-6)
-
-    return active * torch.clamp(normalized_vx, min=0.0, max=1.0)
-
-
-def standing_still_penalty(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    asset_cfg: SceneEntityCfg,
-    min_command: float = 0.10,
-    min_speed: float = 0.12,
-) -> torch.Tensor:
-    """Penalize standing still when the command asks the robot to move forward.
-
-    This directly attacks the behavior you described: the policy stands or shuffles
-    instead of producing forward locomotion.
-    """
-    asset: Articulation = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-
-    commanded_vx = torch.clamp(command[:, 0], min=0.0)
-    actual_vx = asset.data.root_lin_vel_b[:, 0]
-
-    active = (commanded_vx > min_command).float()
-
-    # Positive when actual forward speed is too small.
-    speed_deficit = torch.clamp(min_speed - actual_vx, min=0.0)
-
-    return active * speed_deficit
-
-
-def base_height_l2(
-    env: ManagerBasedRLEnv,
-    target_height: float,
-    asset_cfg: SceneEntityCfg,
-) -> torch.Tensor:
-    """Penalize root/base height error.
-
-    This is a fall-prevention shaping reward. It does not depend on contact sensors,
-    so it works correctly when self-collision is enabled.
-    """
-    asset: Articulation = env.scene[asset_cfg.name]
-    return torch.square(asset.data.root_pos_w[:, 2] - target_height)
+    return (~torch.any(in_contact, dim=1)).float()
