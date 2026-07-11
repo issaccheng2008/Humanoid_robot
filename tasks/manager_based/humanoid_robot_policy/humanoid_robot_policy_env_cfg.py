@@ -452,12 +452,12 @@ class RewardsCfg:
     # The terrain variation is small enough that proper foot lift is still possible.
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
-        weight=-0.5,
+        weight=-2.0,
     )
 
     ang_vel_xy_l2 = RewTerm(
         func=mdp.ang_vel_xy_l2,
-        weight=-0.05,
+        weight=-0.2,
     )
 
     # -------------------------------------------------------------------------
@@ -468,7 +468,7 @@ class RewardsCfg:
     # If they are too strong, the easiest solution is "do not move".
     dof_torques_l2 = RewTerm(
         func=mdp.joint_torques_l2,
-        weight=-5.0e-8,
+        weight=-2.0e-7,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -479,7 +479,7 @@ class RewardsCfg:
 
     dof_acc_l2 = RewTerm(
         func=mdp.joint_acc_l2,
-        weight=-5.0e-8,
+        weight=-2.0e-7,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
