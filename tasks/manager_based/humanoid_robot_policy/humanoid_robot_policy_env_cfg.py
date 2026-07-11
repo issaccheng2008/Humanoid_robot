@@ -32,13 +32,54 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
-from isaaclab.terrains import TerrainImporterCfg
+import isaaclab.terrains as terrain_gen
+from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from . import mdp
 
 from .humanoid_robot import HUMANOID_ROBOT_CFG
+
+SMALL_ROUGH_TERRAIN_CFG = TerrainGeneratorCfg(
+    # Size of each generated terrain patch.
+    size=(8.0, 8.0),
+
+    # Flat border around the complete terrain grid.
+    border_width=10.0,
+
+    # Creates 10 × 20 = 200 terrain patches.
+    num_rows=10,
+    num_cols=20,
+
+    # Resolution of the generated terrain.
+    horizontal_scale=0.05,  # one mesh point every 5 cm
+    vertical_scale=0.001,   # height resolution of 1 mm
+
+    slope_threshold=0.75,
+    curriculum=False,
+    use_cache=False,
+
+    sub_terrains={
+        "small_random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=1.0,
+
+            # Ground elevation varies from -5 mm to +5 mm.
+            noise_range=(-0.005, 0.005),
+
+            # Heights are generated in 1 mm increments.
+            noise_step=0.001,
+
+            # Random samples are generated every 10 cm and interpolated.
+            # This produces smoother deviations instead of sharp noise.
+            downsampled_scale=0.10,
+
+            # Flat padding around each individual patch.
+            border_width=0.25,
+        ),
+    },
+)
+
 
 
 ##
@@ -87,8 +128,14 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
     # Ground plane.
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
-        terrain_type="plane",
+
+        # Use the generated terrain instead of an infinite plane.
+        terrain_type="generator",
+        terrain_generator=SMALL_ROUGH_TERRAIN_CFG,
+
         collision_group=-1,
+
+        # Ground friction remains fixed.
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="average",
             restitution_combine_mode="average",
@@ -96,6 +143,7 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
             dynamic_friction=0.8,
             restitution=0.0,
         ),
+
         debug_vis=False,
     )
 
@@ -137,7 +185,7 @@ class CommandsCfg:
         resampling_time_range=(10.0, 10.0),
 
         # Do not give standing commands during the first walking experiment.
-        rel_standing_envs=0.0,
+        rel_standing_envs=0.01,
 
         # Disable heading/turning at first.
         rel_heading_envs=0.0,
@@ -147,7 +195,7 @@ class CommandsCfg:
         debug_vis=True,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
             # Force real forward walking commands.
-            lin_vel_x=(0.0, 2.0),
+            lin_vel_x=(0.0, 1.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(-math.pi, math.pi),
@@ -328,10 +376,10 @@ class RewardsCfg:
     # First teach straight walking, then increase turning later.
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_world_exp,
-        weight=1.5,
+        weight=2.5,
         params={
             "command_name": "base_velocity",
-            "std": 0.5,
+            "std": 0.3,
         },
     )
 
@@ -419,15 +467,6 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
         weight=-1.0,
-    )
-
-    base_height_l2 = RewTerm(
-        func=mdp.base_height_l2,
-        weight=-2.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "target_height": TARGET_BASE_HEIGHT,
-        },
     )
 
     # Add this for flat-ground walking. Your previous value was 0.0.
@@ -610,7 +649,7 @@ class HumanoidRobotPolicyEnvCfg_PLAY(HumanoidRobotPolicyEnvCfg):
         self.episode_length_s = 50.0
 
         # Fixed walking command for playback.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 2)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 1)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (0, 0)
         self.commands.base_velocity.ranges.heading = (3.1, 3.1)
