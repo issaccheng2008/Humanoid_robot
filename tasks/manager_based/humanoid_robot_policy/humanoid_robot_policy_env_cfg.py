@@ -57,19 +57,12 @@ MIN_BASE_HEIGHT = 0.20
 MAX_BASE_TILT = math.radians(65.0)
 
 LEG_JOINT_NAMES = [
-    "r_leg_pitch_joint",
-    "r_leg_roll_joint",
-    "r_leg_yaw_joint",
-    "r_knee_pitch_joint",
-    "r_ankle_pitch_joint",
-    "r_ankle_roll_joint",
-
-    "l_leg_pitch_joint",
-    "l_leg_roll_joint",
-    "l_leg_yaw_joint",
-    "l_knee_pitch_joint",
-    "l_ankle_pitch_joint",
-    "l_ankle_roll_joint",
+    ".*_leg_pitch_joint",
+    ".*_leg_roll_joint",
+    ".*_leg_yaw_joint",
+    ".*_knee_pitch_joint",
+    ".*_ankle_pitch_joint",
+    ".*_ankle_roll_joint",
 ]
 
 ANKLE_JOINT_NAMES = [
@@ -154,7 +147,7 @@ class CommandsCfg:
         debug_vis=True,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
             # Force real forward walking commands.
-            lin_vel_x=(0.25, 2.0),
+            lin_vel_x=(0.0, 2.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(-math.pi, math.pi),
@@ -277,6 +270,32 @@ class EventCfg:
             # Keep default standing pose at first.
             "position_range": (1.0, 1.0),
             "velocity_range": (0.0, 0.0),
+        },
+    )
+
+    # Randomize the physics material of the two feet.
+    randomize_foot_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=FOOT_BODY_NAMES,
+            ),
+
+            # One random material is assigned to each environment.
+            "static_friction_range": (0.7, 1.3),
+            "dynamic_friction_range": (0.5, 1.1),
+
+            # Keep feet non-bouncy.
+            "restitution_range": (0.0, 0.1),
+
+            # Discretize the random range into material buckets.
+            "num_buckets": 64,
+
+            # Prevent physically inconsistent combinations such as
+            # dynamic friction being greater than static friction.
+            "make_consistent": True,
         },
     )
 
@@ -591,7 +610,7 @@ class HumanoidRobotPolicyEnvCfg_PLAY(HumanoidRobotPolicyEnvCfg):
         self.episode_length_s = 50.0
 
         # Fixed walking command for playback.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 2)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 2)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (0, 0)
         self.commands.base_velocity.ranges.heading = (3.1, 3.1)
