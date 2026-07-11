@@ -85,7 +85,7 @@ agent:
   clip_predicted_values: True
 
   # Exploration and value loss.
-  # G1 flat uses 0.008; this is a good starting point for humanoid locomotion.
+  # A value of 0.008 is a useful G1-style starting point for rough-terrain humanoid locomotion.
   entropy_loss_scale: 0.008
   value_loss_scale: 1.0
 
@@ -96,7 +96,7 @@ agent:
 
   # Logging and checkpoints.
   experiment:
-    directory: "humanoid_robot_policy_flat"
+    directory: "humanoid_robot_policy_rough"
     experiment_name: ""
     write_interval: auto
     checkpoint_interval: auto
@@ -107,8 +107,8 @@ agent:
 trainer:
   class: SequentialTrainer
 
-  # Same starting value as the G1 flat config.
-  # Increase later if the robot starts learning but is not yet stable.
+  # Initial training budget for rough-terrain velocity and turning control.
+  # Increase it if the robot is learning but has not yet become robust.
   timesteps: 72000
 
   environment_info: log
