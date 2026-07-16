@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -97,6 +97,9 @@ TARGET_BASE_HEIGHT = 0.32
 MIN_BASE_HEIGHT = 0.20
 MAX_BASE_TILT = math.radians(65.0)
 
+WOODEN_BAR_CURRICULUM_START_STEP = 20_000
+WOODEN_BAR_CURRICULUM_FULL_STEP = 50_000
+
 LEG_JOINT_NAMES = [
     ".*_leg_pitch_joint",
     ".*_leg_roll_joint",
@@ -123,7 +126,7 @@ YAW_ROLL_JOINT_NAMES = [
 
 @configclass
 class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
-    """Scene configuration for rough-terrain walking with forward and turning commands."""
+    """Scene configuration for rough-terrain walking, turning, and wooden-bar crossing."""
 
     # Randomly rough ground used to improve locomotion robustness.
     terrain = TerrainImporterCfg(
@@ -150,6 +153,33 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
     # Robot.
     robot: ArticulationCfg = HUMANOID_ROBOT_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot"
+    )
+
+    # Competition obstacle: 350 mm long with a 10 x 20 mm cross-section.
+    # Use the rules' more difficult, upright 20 mm-high orientation.
+    wooden_bar = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/WoodenBar",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.01, 0.35, 0.02),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=False,
+                max_depenetration_velocity=0.5,
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.035),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="average",
+                restitution_combine_mode="average",
+                static_friction=0.6,
+                dynamic_friction=0.5,
+                restitution=0.0,
+            ),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.8, 0.02, 0.02),
+            ),
+        ),
+        # The reset event keeps the obstacle hidden until its scheduled appearance.
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, -1.0)),
     )
 
     # Contact sensor used for foot stepping rewards only.
@@ -180,27 +210,20 @@ class HumanoidRobotPolicySceneCfg(InteractiveSceneCfg):
 class CommandsCfg:
     """Command specifications for the MDP."""
 
-    base_velocity = mdp.UniformVelocityCommandCfg(
+    base_velocity = mdp.ForwardYawVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
 
-        # Do not give standing commands during the first walking experiment.
-        rel_standing_envs=0.01,
-
-        # Use direct yaw-rate commands for turning. ``heading_command=False`` means
-        # angular velocity is sampled from ``ang_vel_z`` instead of deriving it
-        # from an absolute heading target. Therefore, ``rel_heading_envs`` is zero.
-        rel_heading_envs=0.0,
-        heading_command=False,
-        heading_control_stiffness=0.5,
+        # Increase stop-command sampling from 1% to 20%. Obstacle episodes keep
+        # moving until the bar is crossed, so a stop cannot block its appearance.
+        rel_standing_envs=0.20,
+        bar_forward_speed=0.7,
 
         debug_vis=True,
-        ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            # Sample forward walking and turning commands; lateral velocity remains disabled.
-            lin_vel_x=(0.0, 1.0),
-            lin_vel_y=(0.0, 0.0),
+        ranges=mdp.ForwardYawVelocityCommandCfg.Ranges(
+            # Moving commands always request 0.7 m/s; only yaw rate is randomized.
+            lin_vel_x=(0.7, 0.7),
             ang_vel_z=(-0.5, 0.5),
-            heading=(-math.pi, math.pi),
         ),
     )
 
@@ -255,8 +278,20 @@ class ObservationsCfg:
 
         # Commanded walking velocity.
         velocity_commands = ObsTerm(
-            func=mdp.generated_commands,
+            func=mdp.forward_yaw_velocity_command,
             params={"command_name": "base_velocity"},
+        )
+
+        # Forward distance to the obstacle. It is 0.40 m before appearance and
+        # after a successful crossing, with +/-5 mm simulated sensor noise.
+        wooden_bar_distance = ObsTerm(
+            func=mdp.wooden_bar_distance,
+            params={
+                "robot_cfg": SceneEntityCfg("robot"),
+                "foot_cfg": SceneEntityCfg("robot", body_names=FOOT_BODY_NAMES),
+            },
+            noise=Unoise(n_min=-0.005, n_max=0.005),
+            clip=(0.0, 0.405),
         )
 
         # Joint state.
@@ -349,6 +384,30 @@ class EventCfg:
         },
     )
 
+    reset_wooden_bar = EventTerm(
+        func=mdp.reset_wooden_bar,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("wooden_bar"),
+            "robot_cfg": SceneEntityCfg("robot"),
+        },
+    )
+
+    # The interval is per-environment. The event function guarantees at most one
+    # appearance per episode and refuses to spawn before two seconds have elapsed.
+    spawn_wooden_bar = EventTerm(
+        func=mdp.spawn_wooden_bar,
+        mode="interval",
+        interval_range_s=(2.0, 4.0),
+        is_global_time=False,
+        params={
+            "asset_cfg": SceneEntityCfg("wooden_bar"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "distance_range": (0.30, 0.40),
+            "minimum_episode_time_s": 2.0,
+        },
+    )
+
 
 @configclass
 class RewardsCfg:
@@ -366,7 +425,7 @@ class RewardsCfg:
     # Stronger and sharper than your current version.
     # Your old std=0.5 was too forgiving, so standing still could still get reward.
     track_lin_vel_xy_exp = RewTerm(
-        func=mdp.track_lin_vel_xy_yaw_frame_exp,
+        func=mdp.track_forward_velocity_exp,
         weight=2.5,
         params={
             "command_name": "base_velocity",
@@ -377,11 +436,42 @@ class RewardsCfg:
     # Track the sampled yaw-rate commands so the policy learns turning together
     # with forward locomotion.
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_world_exp,
+        func=mdp.track_yaw_rate_exp,
         weight=2.5,
         params={
             "command_name": "base_velocity",
             "std": 0.3,
+        },
+    )
+
+    # Lateral motion is no longer commanded, but sideways drift is still undesirable.
+    lateral_velocity_l2 = RewTerm(
+        func=mdp.lateral_velocity_l2,
+        weight=-0.5,
+    )
+
+    wooden_bar_progress = RewTerm(
+        func=mdp.wooden_bar_crossing_progress,
+        weight=1.0,
+        params={"robot_cfg": SceneEntityCfg("robot")},
+    )
+
+    wooden_bar_foot_clearance = RewTerm(
+        func=mdp.wooden_bar_foot_clearance,
+        weight=0.5,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=FOOT_BODY_NAMES),
+            "crossing_window": 0.08,
+            "target_clearance": 0.04,
+        },
+    )
+
+    wooden_bar_success = RewTerm(
+        func=mdp.wooden_bar_crossing_success,
+        weight=20.0,
+        params={
+            "robot_cfg": SceneEntityCfg("robot", body_names=FOOT_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg("wooden_bar"),
         },
     )
 
@@ -560,6 +650,23 @@ class TerminationsCfg:
         },
     )
 
+    wooden_bar_moved = DoneTerm(
+        func=mdp.wooden_bar_moved,
+        params={
+            "asset_cfg": SceneEntityCfg("wooden_bar"),
+            "position_tolerance": 0.002,
+            "rotation_tolerance": math.radians(2.0),
+        },
+    )
+
+    wooden_bar_timeout = DoneTerm(
+        func=mdp.wooden_bar_timeout,
+        params={
+            "robot_cfg": SceneEntityCfg("robot", body_names=FOOT_BODY_NAMES),
+            "timeout_s": 20.0,
+        },
+    )
+
 
 ##
 # MDP: Curriculum
@@ -567,13 +674,15 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    """Curriculum terms for the MDP.
+    """Begin obstacle training only after the walking/turning pretraining phase."""
 
-    Training already uses randomly rough terrain with fixed difficulty. The
-    terrain generator curriculum is disabled, so no curriculum term is needed.
-    """
-
-    pass
+    wooden_bar = CurrTerm(
+        func=mdp.wooden_bar_curriculum,
+        params={
+            "start_step": WOODEN_BAR_CURRICULUM_START_STEP,
+            "full_probability_step": WOODEN_BAR_CURRICULUM_FULL_STEP,
+        },
+    )
 
 
 ##
@@ -606,7 +715,9 @@ class HumanoidRobotPolicyEnvCfg(ManagerBasedRLEnvCfg):
 
         # General settings.
         self.decimation = 4
-        self.episode_length_s = 15.0
+        # Allows the delayed obstacle appearance plus the full 20-second
+        # crossing window, while remaining above the requested 30 seconds.
+        self.episode_length_s = 35.0
 
         # Simulation settings.
         self.sim.dt = 0.005
@@ -640,11 +751,14 @@ class HumanoidRobotPolicyEnvCfg_PLAY(HumanoidRobotPolicyEnvCfg):
         self.episode_length_s = 50.0
 
         # Fixed walking command for playback.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 1)
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (0, 0)
-        self.commands.base_velocity.ranges.heading = (3.1, 3.1)
-        # self.commands.base_velocity.ranges.ang_vel_z = (-0.5, 0.5)
-        # self.commands.base_velocity.ranges.heading = (-math.pi, math.pi)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.7, 0.7)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.rel_standing_envs = 0.0
+
+        # Playback starts directly at the obstacle stage so the trained crossing
+        # behavior can be inspected without waiting for the training curriculum.
+        self.curriculum.wooden_bar.params["start_step"] = -1
+        self.curriculum.wooden_bar.params["full_probability_step"] = 0
+
         # Disable observation noise during playback.
         self.observations.policy.enable_corruption = False
